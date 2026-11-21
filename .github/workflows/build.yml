@@ -102,7 +102,12 @@ jobs:
       - name: Collect wasm binary
         working-directory: agda
         run: |
-          BIN="$(nix develop . --command wasm32-wasi-cabal list-bin agda)"
+          BIN="$(find dist-newstyle -type f -name agda.wasm -print -quit)"
+          if [ -z "$BIN" ]; then
+            echo "::error::agda.wasm not found under dist-newstyle"
+            exit 1
+          fi
+          echo "Found: $BIN"
           cp "$BIN" ../agda.wasm
 
       - name: Install binaryen (wasm-opt)
