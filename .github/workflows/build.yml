@@ -99,6 +99,12 @@ jobs:
         run: |
           nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -foptimise-heavily"
 
+      - name: Collect wasm binary
+        working-directory: agda
+        run: |
+          BIN="$(nix develop . --command wasm32-wasi-cabal list-bin agda)"
+          cp "$BIN" ../agda.wasm
+
       - name: Install binaryen (wasm-opt)
         env:
           GH_TOKEN: ${{ github.token }}
