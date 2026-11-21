@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'agda/agda git ref to build (tag/branch/commit, e.g. v2.9.0); empty = latest upstream release'
+        description: 'agda/agda git ref to build (tag/branch/commit, e.g. v2.9.0); empty = every missing upstream release >= v2.9.0'
         required: false
         default: ''
 
@@ -15,35 +15,67 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      refs: ${{ steps.plan.outputs.refs }}
     steps:
-      - id: target
-        name: Determine target ref and check for existing release
+      - id: plan
+        name: List refs to build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          REF="${{ inputs.ref }}"
-          if [ -z "$REF" ]; then
-            REF="$(gh api repos/agda/agda/releases/latest --jq .tag_name)"
-          fi
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          if gh release view "agda-wasm-$REF" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release agda-wasm-$REF already exists, nothing to do."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          exists() { gh release view "agda-wasm-$1" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; }
 
+          REF="${{ inputs.ref }}"
+          if [ -n "$REF" ]; then
+            # Manual mode: build exactly this ref (unless already released)
+            if exists "$REF"; then
+              echo "agda-wasm-$REF already exists, nothing to do."
+              REFS='[]'
+            else
+              REFS="$(printf '%s\n' "$REF" | jq -R . | jq -sc .)"
+            fi
+          else
+            # Auto mode: every upstream stable release >= v2.9.0 without a
+            # matching release here (v2.9.0 is the first version with WASM support)
+            PAGE=1
+            TAGS=""
+            while :; do
+              BATCH="$(gh api "repos/agda/agda/releases?per_page=100&page=$PAGE" --jq '.[] | select(.prerelease | not) | .tag_name')"
+              [ -z "$BATCH" ] && break
+              TAGS="$TAGS$BATCH"$'\n'
+              [ "$(printf '%s\n' "$BATCH" | wc -l)" -lt 100 ] && break
+              PAGE=$((PAGE + 1))
+            done
+            MISSING=""
+            for TAG in $(printf '%s' "$TAGS" | sed '/^$/d' | sort -rV); do
+              LOWEST="$(printf '%s\n%s\n' "$TAG" 'v2.9.0' | sort -V | head -1)"
+              [ "$LOWEST" != 'v2.9.0' ] && continue
+              exists "$TAG" || MISSING="$MISSING$TAG"$'\n'
+            done
+            REFS="$(printf '%s' "$MISSING" | sed '/^$/d' | jq -R . | jq -sc .)"
+          fi
+          echo "refs=$REFS" >> "$GITHUB_OUTPUT"
+          echo "Refs to build: $REFS"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.refs != '[]' && needs.plan.outputs.refs != ''
+    strategy:
+      matrix:
+        ref: ${{ fromJSON(needs.plan.outputs.refs) }}
+    runs-on: ubuntu-latest
+    steps:
       - id: check_mnt
-        if: steps.target.outputs.skip != 'true'
         name: Check if /mnt is a mountpoint
         run: |
           if df | awk '{print $6}' | grep -q '/mnt'; then
             echo "found=1" >> "$GITHUB_OUTPUT"
           fi
 
-      - if: steps.target.outputs.skip != 'true' && steps.check_mnt.outputs.found
+      - if: steps.check_mnt.outputs.found
         uses: easimon/maximize-build-space@v10
         with:
           remove-android: true
@@ -53,63 +85,51 @@ jobs:
           remove-haskell: true
           root-reserve-mb: 30000
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Checkout agda source
+      - name: Checkout agda source
         uses: actions/checkout@v7
         with:
           repository: agda/agda
-          ref: ${{ steps.target.outputs.ref }}
+          ref: ${{ matrix.ref }}
           path: agda
 
-      - if: steps.target.outputs.skip != 'true'
-        uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v31
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Build Agda (wasm32-wasi)
+      - name: Build Agda (wasm32-wasi)
         working-directory: agda
         run: |
           nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -foptimise-heavily"
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Install binaryen (wasm-opt)
+      - name: Install binaryen (wasm-opt)
         run: |
           VER="$(curl -s https://api.github.com/repos/WebAssembly/binaryen/releases/latest --jq .tag_name)"
           curl -sL "https://github.com/WebAssembly/binaryen/releases/download/$VER/binaryen-$VER-x86_64-linux.tar.gz" | tar xz
           echo "$PWD/binaryen-$VER/bin" >> "$GITHUB_PATH"
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Shrink agda.wasm (wasm-opt)
+      - name: Shrink agda.wasm (wasm-opt)
         run: |
           wasm-opt -Os --strip-debug agda.wasm -o agda.wasm.opt
           mv agda.wasm.opt agda.wasm
           ls -lh agda.wasm
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Collect artifacts
-        working-directory: agda
+      - name: Collect artifacts
         run: |
-          BIN="$(nix develop . --command wasm32-wasi-cabal list-bin agda)"
-          cp "$BIN" ../agda.wasm
-          cd ..
           sha256sum agda.wasm > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - if: steps.target.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: agda-wasm-${{ steps.target.outputs.ref }}
+          name: agda-wasm-${{ matrix.ref }}
           path: |
             agda.wasm
             SHA256SUMS.txt
           if-no-files-found: error
 
-      - if: steps.target.outputs.skip != 'true'
-        name: Publish release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "agda-wasm-${{ steps.target.outputs.ref }}" \
+          gh release create "agda-wasm-${{ matrix.ref }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Agda ${{ steps.target.outputs.ref }} (WASM)" \
-            --notes "agda.wasm for agda/agda@${{ steps.target.outputs.ref }} (wasm32-wasi). Checksums in SHA256SUMS.txt; usage in the README." \
+            --title "Agda ${{ matrix.ref }} (WASM)" \
+            --notes "agda.wasm for agda/agda@${{ matrix.ref }} (wasm32-wasi). Checksums in SHA256SUMS.txt; usage in the README." \
             agda.wasm SHA256SUMS.txt

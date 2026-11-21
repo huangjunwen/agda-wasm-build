@@ -31,8 +31,9 @@ upstream's `flake.lock` (same as the upstream `[wasm]` CI) — then builds
 
 ## Triggers
 
-- **Weekly schedule** (Mondays 04:23 UTC): builds the latest upstream release
-  if a matching release doesn't exist here yet.
+- **Weekly schedule** (Mondays 04:23 UTC): checks every upstream stable
+  release with version >= v2.9.0 (the first version with WASM support) and
+  builds all the ones that don't have a matching release here yet.
 - **Manual**: `gh workflow run build.yml -f ref=vX.Y.Z` — `ref` can be any
-  `agda/agda` tag, branch or commit; empty means the latest upstream release.
-  Existing releases are never rebuilt.
+  `agda/agda` tag, branch or commit; empty means "every missing upstream
+  release >= v2.9.0". Existing releases are never rebuilt.
