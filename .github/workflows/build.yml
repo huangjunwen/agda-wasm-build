@@ -1,0 +1,101 @@
+name: Build Agda WASM
+
+on:
+  schedule:
+    # Weekly, Mondays 04:23 UTC — pick up new upstream releases
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'agda/agda git ref to build (tag/branch/commit, e.g. v2.9.0); empty = latest upstream release'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - id: target
+        name: Determine target ref and check for existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REF="${{ inputs.ref }}"
+          if [ -z "$REF" ]; then
+            REF="$(gh api repos/agda/agda/releases/latest --jq .tag_name)"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          if gh release view "agda-wasm-$REF" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release agda-wasm-$REF already exists, nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: check_mnt
+        if: steps.target.outputs.skip != 'true'
+        name: Check if /mnt is a mountpoint
+        run: |
+          if df | awk '{print $6}' | grep -q '/mnt'; then
+            echo "found=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.target.outputs.skip != 'true' && steps.check_mnt.outputs.found
+        uses: easimon/maximize-build-space@v10
+        with:
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+          root-reserve-mb: 30000
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Checkout agda source
+        uses: actions/checkout@v7
+        with:
+          repository: agda/agda
+          ref: ${{ steps.target.outputs.ref }}
+          path: agda
+
+      - if: steps.target.outputs.skip != 'true'
+        uses: cachix/install-nix-action@v31
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Build Agda (wasm32-wasi)
+        working-directory: agda
+        run: |
+          nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -fdebug -foptimise-heavily"
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Collect artifacts
+        working-directory: agda
+        run: |
+          BIN="$(nix develop . --command wasm32-wasi-cabal list-bin agda)"
+          cp "$BIN" ../agda.wasm
+          cd ..
+          sha256sum agda.wasm > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - if: steps.target.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agda-wasm-${{ steps.target.outputs.ref }}
+          path: |
+            agda.wasm
+            SHA256SUMS.txt
+          if-no-files-found: error
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "agda-wasm-${{ steps.target.outputs.ref }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Agda ${{ steps.target.outputs.ref }} (WASM)" \
+            --notes "WebAssembly (wasm32-wasi) build of the Agda compiler from agda/agda@${{ steps.target.outputs.ref }}. Run with any WASI runtime, e.g.: wasmtime run --dir / --argv0 agda agda.wasm --version . Built with the toolchain pinned by agda/agda's own flake.lock (same as the upstream [wasm] CI), flags: -fdebug -foptimise-heavily." \
+            agda.wasm SHA256SUMS.txt
