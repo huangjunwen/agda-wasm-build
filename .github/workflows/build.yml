@@ -100,8 +100,10 @@ jobs:
           nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -foptimise-heavily"
 
       - name: Install binaryen (wasm-opt)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VER="$(curl -s https://api.github.com/repos/WebAssembly/binaryen/releases/latest --jq .tag_name)"
+          VER="$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)"
           curl -sL "https://github.com/WebAssembly/binaryen/releases/download/$VER/binaryen-$VER-x86_64-linux.tar.gz" | tar xz
           echo "$PWD/binaryen-$VER/bin" >> "$GITHUB_PATH"
 
