@@ -97,7 +97,7 @@ jobs:
       - name: Build Agda (wasm32-wasi)
         working-directory: agda
         run: |
-          nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -foptimise-heavily"
+          nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -O2 --enable-split-sections -foptimise-heavily"
 
       - name: Collect wasm binary
         working-directory: agda
@@ -115,7 +115,7 @@ jobs:
 
       - name: Shrink agda.wasm (wasm-opt)
         run: |
-          wasm-opt -Os --strip-debug agda.wasm -o agda.wasm.opt
+          wasm-opt -Oz --strip-debug agda.wasm -o agda.wasm.opt
           mv agda.wasm.opt agda.wasm
           ls -lh agda.wasm
 
