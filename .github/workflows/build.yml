@@ -68,7 +68,21 @@ jobs:
         name: Build Agda (wasm32-wasi)
         working-directory: agda
         run: |
-          nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -fdebug -foptimise-heavily"
+          nix develop . --command bash -c "wasm32-wasi-cabal update && cabal update && wasm32-wasi-cabal build -foptimise-heavily"
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Install binaryen (wasm-opt)
+        run: |
+          VER="$(curl -s https://api.github.com/repos/WebAssembly/binaryen/releases/latest --jq .tag_name)"
+          curl -sL "https://github.com/WebAssembly/binaryen/releases/download/$VER/binaryen-$VER-x86_64-linux.tar.gz" | tar xz
+          echo "$PWD/binaryen-$VER/bin" >> "$GITHUB_PATH"
+
+      - if: steps.target.outputs.skip != 'true'
+        name: Shrink agda.wasm (wasm-opt)
+        run: |
+          wasm-opt -Os --strip-debug agda.wasm -o agda.wasm.opt
+          mv agda.wasm.opt agda.wasm
+          ls -lh agda.wasm
 
       - if: steps.target.outputs.skip != 'true'
         name: Collect artifacts
@@ -97,5 +111,5 @@ jobs:
           gh release create "agda-wasm-${{ steps.target.outputs.ref }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Agda ${{ steps.target.outputs.ref }} (WASM)" \
-            --notes "WebAssembly (wasm32-wasi) build of the Agda compiler from agda/agda@${{ steps.target.outputs.ref }}. Run with any WASI runtime, e.g.: wasmtime run --dir / --argv0 agda agda.wasm --version . Built with the toolchain pinned by agda/agda's own flake.lock (same as the upstream [wasm] CI), flags: -fdebug -foptimise-heavily." \
+            --notes "agda.wasm for agda/agda@${{ steps.target.outputs.ref }} (wasm32-wasi). Checksums in SHA256SUMS.txt; usage in the README." \
             agda.wasm SHA256SUMS.txt
