@@ -1,6 +1,6 @@
 # agda-wasm-build
 
-Automated [WebAssembly](https://webassembly.org/) builds of the [Agda compiler](https://github.com/agda/agda).
+Automated [WebAssembly](https://webassembly.org/) builds of [Agda](https://github.com/agda/agda).
 
 Each release (`agda-wasm-vX.Y.Z`) contains:
 
