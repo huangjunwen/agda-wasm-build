@@ -9,45 +9,6 @@ Each release (`agda-wasm-vX.Y.Z`) contains:
   with Binaryen (`wasm-opt -Oz --strip-debug`)
 - `SHA256SUMS.txt`
 
-## Running
-
-Any WASI runtime works, e.g. [wasmtime](https://wasmtime.dev/). The first
-launch compiles the ~34 MB module with Cranelift, which can take a couple of
-minutes; enable wasmtime's compilation cache so later launches start in
-about a second:
-
-```sh
-wasmtime config new        # one-time, writes ~/.config/wasmtime/config.toml
-```
-
-Verified commands (always pass `-C cache` after the one-time setup above;
-`--dir /::/` maps the host filesystem to the same paths inside the guest,
-which also stops Agda's search for a project root at `/`):
-
-```sh
-# version
-wasmtime run -C cache --dir /::/ --env HOME="$HOME" agda.wasm --version
-
-# extract the built-in library (Agda_datadir must be an existing directory)
-mkdir -p agda-data
-wasmtime run -C cache --dir /::/ --env HOME="$HOME" \
-    --env Agda_datadir="$PWD/agda-data" agda.wasm --setup
-
-# type-check a module (include dirs use lowercase -i)
-wasmtime run -C cache --dir /::/ --env HOME="$HOME" --env PWD="$PWD" \
-    --env Agda_datadir="$PWD/agda-data" agda.wasm -i . Main.agda
-```
-
-Notes:
-
-- `HOME` is mandatory: without it Agda falls back to probing the effective
-  UID, which fails under WASI.
-- `--interaction` additionally needs a runtime that never blocks on stdin
-  plus the RTS option `+RTS -V1 -RTS` (the default RTS tick value thrashes
-  on WASM).
-- On WASM, Agda cannot spawn external processes (no LaTeX compilation, no
-  external programs from `--interaction`).
-
 ## How it's built
 
 The workflow checks out the corresponding tag of `agda/agda`, enters the Nix
